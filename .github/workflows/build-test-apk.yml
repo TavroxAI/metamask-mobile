@@ -1,0 +1,115 @@
+# 自己用的测试 APK 构建（fork 专用，不依赖 MetaMask 组织的任何 secret）
+#
+# 为什么不用仓库自带的 build-android.yml / build.yml：
+#   1. 签名走 AWS OIDC + Secrets Manager（configure-signing action），fork 里没有这个 IAM 角色
+#   2. 需要 org 级 secrets（Infura、Firebase、Segment、Sentry…），fork 的 `secrets: inherit` 是空的
+#   3. production 环境会读取 sentry.release.properties 并校验 auth token，缺了就 exit 1
+#
+# 这条流水线走 "dev" 环境：签名用仓库里已入库的 android/keystores/debug.keystore
+# （密码固定 android / alias androiddebugkey），所以不需要任何签名 secret。
+# 构建类型仍是 Release，JS 会打进 APK，装到手机上不需要连 Metro。
+#
+# 用法：GitHub 仓库页 → Actions → "Build test APK" → Run workflow → 下载 artifact
+
+name: Build test APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build prod release APK (dev signing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      # ---- 签名：mainDev 这个 signingConfig 指向已入库的 debug.keystore ----
+      ANDROID_SIGNING_KEYSTORE_PASSWORD: android
+      BITRISEIO_ANDROID_MAIN_KEYSTORE_ALIAS: androiddebugkey
+      BITRISEIO_ANDROID_MAIN_KEYSTORE_PRIVATE_KEY_PASSWORD: android
+
+      # ---- 后端地址：⚠️ 改成你电脑的局域网 IP，手机同一个 Wi-Fi 才连得上 ----
+      # 这一段会被 babel 在打包时内联进 JS，所以必须是构建期可访问的地址
+      MM_SRP_BACKUP_API_URL: http://192.168.0.101:8000
+
+      # ---- 其他构建期变量 ----
+      MM_FOX_CODE: EXAMPLE_FOX_CODE
+      SENTRY_DISABLE_AUTO_UPLOAD: 'true'
+      # 可选：有 Infura key 就填，没有会让网络请求失败
+      MM_INFURA_PROJECT_ID: ${{ secrets.MM_INFURA_PROJECT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      # android/app/build.gradle 第 5 行 apply 了 com.google.gms.google-services，
+      # 所以这个文件必须存在，否则 gradle 直接失败。
+      # 优先用你自己的 Firebase 项目（在仓库 Settings → Secrets 里配 GOOGLE_SERVICES_B64_ANDROID），
+      # 没配的话写入一份占位配置：能编译、能启动，但推送和分析会失效。
+      - name: Write google-services.json
+        env:
+          GOOGLE_SERVICES_B64: ${{ secrets.GOOGLE_SERVICES_B64_ANDROID }}
+        run: |
+          if [ -n "${GOOGLE_SERVICES_B64:-}" ]; then
+            echo "使用仓库 secret 里的 Firebase 配置"
+            echo -n "$GOOGLE_SERVICES_B64" | base64 -d > android/app/google-services.json
+          else
+            echo "::warning::没有配置 GOOGLE_SERVICES_B64_ANDROID，写入占位配置（推送/分析不可用）"
+            cat > android/app/google-services.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "123456789012",
+              "project_id": "metamask-test-local",
+              "storage_bucket": "metamask-test-local.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:123456789012:android:0123456789abcdef",
+                  "android_client_info": {
+                    "package_name": "io.metamask"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [
+                  { "current_key": "AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }
+                ],
+                "services": {
+                  "appinvite_service": { "other_platform_oauth_client": [] }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          JSON
+          fi
+
+      # 走仓库自己的构建脚本：assembleProdRelease
+      # METAMASK_ENVIRONMENT=dev → mainDev 签名 + 不校验 Sentry token + expo channel 跳过
+      - name: Build APK
+        run: yarn build:android:main:dev
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: metamask-test-apk
+          path: android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14

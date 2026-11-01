@@ -1,0 +1,9 @@
+services:
+  srp-backup:
+    build: .
+    container_name: srp-backup
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
