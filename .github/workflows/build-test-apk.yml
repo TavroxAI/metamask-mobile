@@ -59,20 +59,28 @@ jobs:
       - name: Install dependencies
         run: yarn install --immutable
 
-      # android/app/build.gradle 第 5 行 apply 了 com.google.gms.google-services，
-      # 所以这个文件必须存在，否则 gradle 直接失败。
-      # 优先用你自己的 Firebase 项目（在仓库 Settings → Secrets 里配 GOOGLE_SERVICES_B64_ANDROID），
-      # 没配的话写入一份占位配置：能编译、能启动，但推送和分析会失效。
-      - name: Write google-services.json
+      # 1) app/core/InpageBridgeWeb3.js 是生成物（被 .gitignore 掉），
+      #    build.sh 第 247 行会 cp 它到 android assets，缺了就直接失败。
+      #    官方 CI 靠 `yarn setup` 产出，这里单独跑那一步，省掉 pods/gem 等无关步骤。
+      - name: Build inpage bridge
+        run: bash scripts/build-inpage-bridge.sh
+
+      # 2) build.sh 第 253 行要求 GOOGLE_SERVICES_B64_ANDROID 这个环境变量：
+      #    有值就把 base64 解码成 android/app/google-services.json。
+      #    优先用你自己的 Firebase 配置（仓库 Settings → Secrets 配 GOOGLE_SERVICES_B64_ANDROID），
+      #    没配就写一份占位配置：能编译、能启动，但推送和分析会失效。
+      - name: Provide google-services.json
         env:
-          GOOGLE_SERVICES_B64: ${{ secrets.GOOGLE_SERVICES_B64_ANDROID }}
+          REAL_GOOGLE_SERVICES_B64: ${{ secrets.GOOGLE_SERVICES_B64_ANDROID }}
         run: |
-          if [ -n "${GOOGLE_SERVICES_B64:-}" ]; then
+          if [ -n "${REAL_GOOGLE_SERVICES_B64:-}" ]; then
             echo "使用仓库 secret 里的 Firebase 配置"
-            echo -n "$GOOGLE_SERVICES_B64" | base64 -d > android/app/google-services.json
-          else
-            echo "::warning::没有配置 GOOGLE_SERVICES_B64_ANDROID，写入占位配置（推送/分析不可用）"
-            cat > android/app/google-services.json <<'JSON'
+            echo "GOOGLE_SERVICES_B64_ANDROID=${REAL_GOOGLE_SERVICES_B64}" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "::warning::没有配置 GOOGLE_SERVICES_B64_ANDROID，使用占位配置（推送/分析不可用）"
+          cat > /tmp/google-services.json <<'JSON'
           {
             "project_info": {
               "project_number": "123456789012",
@@ -99,7 +107,10 @@ jobs:
             "configuration_version": "1"
           }
           JSON
-          fi
+
+          # -w0 必须有：build.sh 用的是未加引号的 $GOOGLE_SERVICES_B64_ANDROID，
+          # base64 带换行会被拆词，解码出来就是坏的。
+          echo "GOOGLE_SERVICES_B64_ANDROID=$(base64 -w0 /tmp/google-services.json)" >> "$GITHUB_ENV"
 
       # 走仓库自己的构建脚本：assembleProdRelease
       # METAMASK_ENVIRONMENT=dev → mainDev 签名 + 不校验 Sentry token + expo channel 跳过
