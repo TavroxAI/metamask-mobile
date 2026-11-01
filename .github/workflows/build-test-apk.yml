@@ -38,8 +38,8 @@ jobs:
       # Release 构建设计上给商店用：PNG 压缩、资源收缩对测试包没意义但很慢。
       # 带点号的配置项不用环境变量覆盖（ORG_GRADLE_PROJECT_* 遇到点号不可靠），
       # 改成下一步直接追加到 gradle.properties。
-      # runner 有 16G 内存，gradle 默认只给 4G。
-      GRADLE_OPTS: '-Xmx6g -XX:MaxMetaspaceSize=1g'
+      # 注意：GRADLE_OPTS 只影响 Gradle 启动器，daemon 的堆是 org.gradle.jvmargs，
+      # 那个也在下一步里调整。
 
       # ---- 签名：mainDev 这个 signingConfig 指向已入库的 debug.keystore ----
       ANDROID_SIGNING_KEYSTORE_PASSWORD: android
@@ -159,6 +159,14 @@ jobs:
             echo 'org.gradle.parallel=true'
             echo 'org.gradle.caching=true'
             echo 'android.enablePngCrunchInReleaseBuilds=false'
+
+            # 上一轮的真实报错是 JetifyTransform 期间 "Java heap space"：
+            # gradle.properties 只给 daemon 4g，而项目开了 enableJetifier
+            # （android.enableJetifier=true，还带 byte-buddy 忽略规则），
+            # Jetify react-android AAR 很吃内存。提到 8g（runner 有 16G）。
+            echo 'org.gradle.jvmargs=-Xmx8g -XX:MaxMetaspaceSize=1g'
+            # 并行会把 jetify transform 并发跑，每份都要内存；限成 2 个 worker。
+            echo 'org.gradle.workers.max=2'
           } >> android/gradle.properties
           echo "--- gradle.properties (tail) ---"
           tail -6 android/gradle.properties
