@@ -156,17 +156,20 @@ jobs:
           {
             echo ''
             echo '# --- injected by build-test-apk.yml (test build only) ---'
-            echo 'org.gradle.parallel=true'
             echo 'org.gradle.caching=true'
             echo 'android.enablePngCrunchInReleaseBuilds=false'
 
-            # 上一轮的真实报错是 JetifyTransform 期间 "Java heap space"：
-            # gradle.properties 只给 daemon 4g，而项目开了 enableJetifier
-            # （android.enableJetifier=true，还带 byte-buddy 忽略规则），
-            # Jetify react-android AAR 很吃内存。提到 8g（runner 有 16G）。
-            echo 'org.gradle.jvmargs=-Xmx8g -XX:MaxMetaspaceSize=1g'
-            # 并行会把 jetify transform 并发跑，每份都要内存；限成 2 个 worker。
-            echo 'org.gradle.workers.max=2'
+            # 关掉 Jetifier。上一轮 "Java heap space" 就死在 JetifyTransform 上：
+            # jetify 要把每个 AAR 反编译再重打包，吃内存也吃时间。
+            # RN 0.86 全栈已经是 AndroidX，正常情况下不需要 jetifier。
+            # 如果某个依赖确实还在用 support 库，gradle 会明确报出来，到时再开回去。
+            echo 'android.enableJetifier=false'
+
+            # 不再开 parallel：并行把 jetify / CMake / Kotlin 同时跑，
+            # 把 runner 内存压爆（上一轮 exit 143 被强杀）。保守用单 worker + 6g。
+            echo 'org.gradle.parallel=false'
+            echo 'org.gradle.workers.max=1'
+            echo 'org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g'
           } >> android/gradle.properties
           echo "--- gradle.properties (tail) ---"
           tail -6 android/gradle.properties
@@ -175,28 +178,38 @@ jobs:
       # METAMASK_ENVIRONMENT=dev → mainDev 签名 + 不校验 Sentry token + expo channel 跳过
       - name: Build APK
         run: |
-          set -o pipefail
           echo "--- 机器信息 ---"
           nproc
           free -h || true
-          # 完整日志落到文件，失败时由下一步转成 annotation
-          yarn build:android:main:dev 2>&1 | tee /tmp/build.log
+          df -h /home/runner | tail -1
+          # 故意不用 pipefail：先把退出码存下来，让下一步无论
+          # gradle 正常失败还是被信号杀掉，都还有机会跑诊断。
+          set +e
+          yarn build:android:main:dev > /tmp/build.log 2>&1
+          code=$?
+          echo "$code" > /tmp/build.exit
+          echo "gradle 退出码: $code"
+          tail -40 /tmp/build.log
+          free -h || true
 
       # 匿名访问 GitHub API 读不到日志正文（需要认证），但 ::error:: 会生成
       # 一条公开可读的 annotation。把 gradle 的错误摘要发成 annotation，
       # 这样排查时不必依赖人工复制日志。
       - name: Surface build errors
-        if: failure()
+        if: always()
         run: |
           log=/tmp/build.log
+          code=$(cat /tmp/build.exit 2>/dev/null || echo missing)
+          echo "::notice::gradle exit code: $code"
+
           if [ ! -f "$log" ]; then
-            echo "::error::没有拿到构建日志（/tmp/build.log 不存在）"
-            exit 0
+            echo "::error::没有拿到构建日志（/tmp/build.log 不存在），退出码 $code"
+            exit 1
           fi
 
           summary=$(awk '/^FAILURE: Build failed/{flag=1} flag{print} /^\* Try:/{flag=0}' "$log" | head -8)
           if [ -z "$summary" ]; then
-            summary=$(grep -n -E "^e: |error:|FAILED|Caused by|Exception" "$log" | head -8)
+            summary=$(grep -n -E "^e: |error:|FAILED|Caused by|OutOfMemory|heap space|SIGTERM|Killed" "$log" | head -8)
           fi
 
           echo "===== 错误摘要 ====="
@@ -210,6 +223,9 @@ jobs:
             line="${line//$'\r'/}"
             echo "::error::${line:0:800}"
           done
+
+          # 构建失败就把 job 标红，别让绿色骗人
+          if [ "$code" != "0" ]; then exit 1; fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
