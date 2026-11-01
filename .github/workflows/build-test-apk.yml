@@ -20,9 +20,16 @@ jobs:
   build:
     name: Build prod release APK (dev signing)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # 4 个 ABI 全量编译在 90 分钟时被强杀过一次，这里放宽并只编 arm64。
+    timeout-minutes: 150
 
     env:
+      # gradle.properties 默认编 4 个架构（armeabi-v7a,arm64-v8a,x86,x86_64），
+      # 实机上只需要 arm64-v8a。ORG_GRADLE_PROJECT_* 环境变量会覆盖
+      # gradle.properties 里的同名属性，不用改仓库里的文件。
+      # ⚠️ 这样产出的 APK 不能装在 x86_64 模拟器上，只能装真机。
+      ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
+
       # ---- 签名：mainDev 这个 signingConfig 指向已入库的 debug.keystore ----
       ANDROID_SIGNING_KEYSTORE_PASSWORD: android
       BITRISEIO_ANDROID_MAIN_KEYSTORE_ALIAS: androiddebugkey
@@ -55,6 +62,18 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      # 第一次构建要下几百 MB 的 gradle 依赖 + 编译所有原生模块。
+      # 缓存能在第二次之后的构建里省掉大部分时间。
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/gradle.properties', 'android/build.gradle', 'android/app/build.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
 
       - name: Install dependencies
         run: yarn install --immutable
