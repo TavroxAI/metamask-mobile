@@ -166,7 +166,42 @@ jobs:
       # 走仓库自己的构建脚本：assembleProdRelease
       # METAMASK_ENVIRONMENT=dev → mainDev 签名 + 不校验 Sentry token + expo channel 跳过
       - name: Build APK
-        run: yarn build:android:main:dev
+        run: |
+          set -o pipefail
+          echo "--- 机器信息 ---"
+          nproc
+          free -h || true
+          # 完整日志落到文件，失败时由下一步转成 annotation
+          yarn build:android:main:dev 2>&1 | tee /tmp/build.log
+
+      # 匿名访问 GitHub API 读不到日志正文（需要认证），但 ::error:: 会生成
+      # 一条公开可读的 annotation。把 gradle 的错误摘要发成 annotation，
+      # 这样排查时不必依赖人工复制日志。
+      - name: Surface build errors
+        if: failure()
+        run: |
+          log=/tmp/build.log
+          if [ ! -f "$log" ]; then
+            echo "::error::没有拿到构建日志（/tmp/build.log 不存在）"
+            exit 0
+          fi
+
+          summary=$(awk '/^FAILURE: Build failed/{flag=1} flag{print} /^\* Try:/{flag=0}' "$log" | head -8)
+          if [ -z "$summary" ]; then
+            summary=$(grep -n -E "^e: |error:|FAILED|Caused by|Exception" "$log" | head -8)
+          fi
+
+          echo "===== 错误摘要 ====="
+          echo "$summary"
+          echo "===== 末尾 30 行 ====="
+          tail -30 "$log"
+
+          echo "$summary" | while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            line="${line//'%'/'%25'}"
+            line="${line//$'\r'/}"
+            echo "::error::${line:0:800}"
+          done
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
