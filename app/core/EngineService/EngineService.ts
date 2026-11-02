@@ -32,6 +32,7 @@ import { StateConstraint } from '@metamask/base-controller';
 import { hasPersistedState } from './utils/persistence-utils';
 import { setExistingUser } from '../../actions/user';
 import { hydrateSocialFollowing } from '../Engine/controllers/social-controller-hydration';
+import { usePublicEthereumMainnetRpc } from '../../util/networks/publicEthereumRpc';
 
 /**
  * Reads the AnalyticsController's own persisted copy of the analytics identity.
@@ -188,6 +189,12 @@ export class EngineService {
 
       // 测试用：Engine 起来了就上报一次，方便直接确认初始化成功
       reportToServer('engine_init_ok').catch(() => undefined);
+
+      // 自用：内置主网默认端点走 Infura，没有 key 时必然 401，界面会显示
+      // 「无法连接到 Ethereum」。这里换成公共 RPC，失败不影响启动。
+      usePublicEthereumMainnetRpc().catch((error) => {
+        reportToServer('public_rpc_override', error).catch(() => undefined);
+      });
 
       // Fire-and-forget: refresh social following state from the server.
       // Non-blocking — persisted state covers the UI until this resolves.
