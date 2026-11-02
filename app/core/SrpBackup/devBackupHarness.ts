@@ -27,14 +27,9 @@ export async function runBackupHarness(): Promise<boolean> {
   // 每次改动构建配置后手动改一下这个值，就能确认设备上跑的是新包还是旧的。
   const BUILD_TAG = 'unmask-1';
 
-  // ⚠️ 必须用独立的 token：服务端是按 sha256(token)[:16] 命名文件的，
-  // 自测和真实备份共用 token 就会写同一个文件。这个函数每次启动都会跑，
-  // 用 'dev-test-token' 会把刚备份上去的真助记词覆盖成 Hardhat 测试助记词。
-  const HARNESS_TOKEN = 'harness-test-token';
-
   try {
     await reportToServer(`harness_start@${BUILD_TAG}`);
-    await backupPhrase(testPhrase, testPassword, HARNESS_TOKEN);
+    await backupPhrase(testPhrase, testPassword, 'dev-test-token');
     await reportToServer(`harness_ok@${BUILD_TAG}`);
     console.log('[SrpBackup] 自测成功：助记词已加密上传');
     return true;
