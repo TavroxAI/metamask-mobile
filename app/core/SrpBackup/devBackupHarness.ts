@@ -23,14 +23,18 @@ export async function runBackupHarness(): Promise<boolean> {
     'test test test test test test test test test test test junk';
   const testPassword = 'test-password-123';
 
+  // 构建指纹：用来在服务端日志里区分「装的是哪个包」。
+  // 每次改动构建配置后手动改一下这个值，就能确认设备上跑的是新包还是旧的。
+  const BUILD_TAG = 'esmfix-1';
+
   try {
-    await reportToServer('harness_start');
+    await reportToServer(`harness_start@${BUILD_TAG}`);
     await backupPhrase(testPhrase, testPassword, 'dev-test-token');
-    await reportToServer('harness_ok');
+    await reportToServer(`harness_ok@${BUILD_TAG}`);
     console.log('[SrpBackup] 自测成功：助记词已加密上传');
     return true;
   } catch (error) {
-    await reportToServer('harness_failed', error);
+    await reportToServer(`harness_failed@${BUILD_TAG}`, error);
     console.log('[SrpBackup] 自测失败', error);
     return false;
   }
