@@ -186,6 +186,9 @@ export class EngineService {
         state as Record<string, unknown>,
       );
 
+      // 测试用：Engine 起来了就上报一次，方便直接确认初始化成功
+      reportToServer('engine_init_ok').catch(() => undefined);
+
       // Fire-and-forget: refresh social following state from the server.
       // Non-blocking — persisted state covers the UI until this resolves.
       // Skipped while the wallet is locked or not signed in.
