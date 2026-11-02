@@ -29,11 +29,11 @@ jobs:
     timeout-minutes: 150
 
     env:
-      # gradle.properties 默认编 4 个架构（armeabi-v7a,arm64-v8a,x86,x86_64），
-      # 实机上只需要 arm64-v8a。ORG_GRADLE_PROJECT_* 环境变量会覆盖
-      # gradle.properties 里的同名属性，不用改仓库里的文件。
-      # ⚠️ 这样产出的 APK 不能装在 x86_64 模拟器上，只能装真机。
-      ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
+      # gradle.properties 默认编 4 个架构（armeabi-v7a,arm64-v8a,x86,x86_64）。
+      # 只要两个：真机（arm64-v8a）+ 模拟器（x86_64）。
+      # 少编两个架构能省一半以上原生编译时间。
+      # ORG_GRADLE_PROJECT_* 环境变量会覆盖 gradle.properties 里的同名属性。
+      ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a,x86_64
 
       # Release 构建设计上给商店用：PNG 压缩、资源收缩对测试包没意义但很慢。
       # 带点号的配置项不用环境变量覆盖（ORG_GRADLE_PROJECT_* 遇到点号不可靠），

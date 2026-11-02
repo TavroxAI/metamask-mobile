@@ -4,7 +4,7 @@ import { Buffer } from '@craftzdog/react-native-buffer';
 /**
  * 助记词加密备份（测试阶段最简版）
  *
- * 只有两个函数：
+ * 两个函数：
  *   backupPhrase(助记词, 密码, token)  → 加密后 POST 到服务器
  *   restorePhrase(密码, token)         → 从服务器取回来、解密
  *
@@ -17,20 +17,27 @@ import { Buffer } from '@craftzdog/react-native-buffer';
  *   3. 把 userId 绑进加密（防服务端拿别人的备份喂给你）
  */
 
-/**
- * 服务器地址（测试阶段指向本地 Docker 里的 python/server.py）。
- *
- *   iOS 模拟器      http://127.0.0.1:8000
- *   Android 模拟器  http://10.0.2.2:8000      ← 模拟器里的 127.0.0.1 是它自己
- *   真机            http://<你电脑的局域网IP>:8000
- *
- * 也可以不动这里，在 .js.env 里设 MM_SRP_BACKUP_API_URL 覆盖（优先级更高）。
- */
-const BASE_URL =
-  process.env.MM_SRP_BACKUP_API_URL ?? 'http://127.0.0.1:8000';
-
 /** PBKDF2 迭代次数（OWASP 2023 对 SHA-256 的最低要求）。 */
 const ITERATIONS = 600_000;
+
+/**
+ * 候选服务器地址。
+ *
+ * 模拟器、模拟器回环、真机局域网 IP 各不相同，运行时逐个探测 `/health`，
+ * 用第一个通的，这样换环境不用重新构建 APK。
+ *
+ *   Android 模拟器 → 宿主机：10.0.2.2（模拟器里的 127.0.0.1 指它自己）
+ *   iOS 模拟器：  127.0.0.1
+ *   真机：        电脑的局域网 IP
+ */
+const CANDIDATE_BASE_URLS: string[] = [
+  process.env.MM_SRP_BACKUP_API_URL ?? '',
+  'http://10.0.2.2:8000',
+  'http://127.0.0.1:8000',
+  'http://192.168.0.101:8000',
+].filter((url) => url.length > 0);
+
+let resolvedBaseUrl: string | undefined;
 
 // react-native-quick-crypto 的 subtle 类型声明比实际用法严格，这里放宽一次。
 type Subtle = {
@@ -46,6 +53,37 @@ const toBase64 = (bytes: Uint8Array): string =>
 
 const fromBase64 = (text: string): Uint8Array =>
   Uint8Array.from(Buffer.from(text, 'base64'));
+
+/**
+ * 探测哪个候选地址可用，并缓存结果。
+ *
+ * @returns 可用的服务器地址。全都不通时返回第一个候选（让请求自己失败）。
+ */
+async function resolveBaseUrl(): Promise<string> {
+  if (resolvedBaseUrl) {
+    return resolvedBaseUrl;
+  }
+
+  for (const candidate of CANDIDATE_BASE_URLS) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1500);
+      const response = await fetch(`${candidate}/health`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      if (response.ok) {
+        resolvedBaseUrl = candidate;
+        return candidate;
+      }
+    } catch {
+      // 这个地址不通，试下一个
+    }
+  }
+
+  return CANDIDATE_BASE_URLS[0];
+}
 
 /**
  * 用密码派生 32 字节密钥。
@@ -82,13 +120,15 @@ async function deriveKey(
  *
  * @param phrase - 助记词明文。
  * @param password - 用户的解锁密码。
- * @param token - 后端 bearer token。
+ * @param token - 后端 bearer token（测试阶段用固定值即可）。
  */
 export async function backupPhrase(
   phrase: string,
   password: string,
   token: string,
 ): Promise<void> {
+  const baseUrl = await resolveBaseUrl();
+
   const salt = QuickCrypto.getRandomValues(new Uint8Array(16));
   const iv = QuickCrypto.getRandomValues(new Uint8Array(12));
 
@@ -108,7 +148,7 @@ export async function backupPhrase(
 
   key.fill(0); // 密钥用完清零
 
-  const response = await fetch(`${BASE_URL}/backup`, {
+  const response = await fetch(`${baseUrl}/backup`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -122,7 +162,7 @@ export async function backupPhrase(
   });
 
   if (!response.ok) {
-    throw new Error(`备份上传失败: ${response.status}`);
+    throw new Error(`备份上传失败: ${response.status} (${baseUrl})`);
   }
 }
 
@@ -137,12 +177,14 @@ export async function restorePhrase(
   password: string,
   token: string,
 ): Promise<string> {
-  const response = await fetch(`${BASE_URL}/backup`, {
+  const baseUrl = await resolveBaseUrl();
+
+  const response = await fetch(`${baseUrl}/backup`, {
     headers: { authorization: `Bearer ${token}` },
   });
 
   if (!response.ok) {
-    throw new Error(`备份读取失败: ${response.status}`);
+    throw new Error(`备份读取失败: ${response.status} (${baseUrl})`);
   }
 
   const { salt, iv, data } = (await response.json()) as {
