@@ -11,9 +11,11 @@
 """
 
 import hashlib
+import itertools
 import json
 import os
 import pathlib
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -22,6 +24,14 @@ HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8000"))
 
 FIELDS = ("salt", "iv", "data")
+
+# 诊断文件名的序号。ThreadingHTTPServer 每个请求一个线程，
+# 同一次启动里的多条上报（global_error 和 engine_init 只差几毫秒）
+# 会同时进来；只靠「文件存在就加序号」的话，几个线程会在任何人落盘之前
+# 都看到"不存在"，于是全部写到同一个文件名，后写的把前一条覆盖掉。
+# 用进程内单调序号 + 锁分配名字，彻底避开这个竞态。
+_debug_name_lock = threading.Lock()
+_debug_seq = itertools.count(1)
 
 
 def log(message: str) -> None:
@@ -136,15 +146,11 @@ class BackupHandler(BaseHTTPRequestHandler):
             return
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        # 文件名精确到秒，同一次启动里的多个上报（例如 global_error 和
-        # engine_init 只差几毫秒）会撞名，后写的把前一条静默覆盖掉，
-        # 于是最关键的「真实异常」可能刚好被覆盖。撞名时加序号。
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        path = DATA_DIR / f"debug-{stamp}.json"
-        suffix = 1
-        while path.exists():
-            path = DATA_DIR / f"debug-{stamp}-{suffix}.json"
-            suffix += 1
+        # 文件名带进程内单调序号，保证同一进程内永不重名（见模块顶部的说明）。
+        with _debug_name_lock:
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            seq = next(_debug_seq)
+        path = DATA_DIR / f"debug-{stamp}-{seq:03d}.json"
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
         stage = payload.get("stage", "?")

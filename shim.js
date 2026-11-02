@@ -219,6 +219,29 @@ if (typeof global.MessageEvent === 'undefined') {
     require('react-native/src/private/webapis/html/events/MessageEvent').default;
 }
 
+// @metamask/post-message-stream 的 window 流在**模块作用域**就做断言：
+//   const getSource = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'source')?.get;
+//   assert(getSource, 'MessageEvent.prototype.source getter is not defined.');
+// （见 node_modules/@metamask/post-message-stream/dist/window/WindowPostMessageStream.cjs:20-24）
+//
+// RN 的 MessageEvent 明确不实现 source（react-native/src/private/webapis/html/events/
+// MessageEvent.js 里 source/ports 是注释掉的 "Unsupported"），所以只要 import
+// @metamask/snaps-controllers，它 → @metamask/post-message-stream 这条链就会在加载时抛错，
+// 而 Metro 的 guardedLoadModule 又会把这个异常吞掉、把 undefined 当模块导出返回，
+// 最终表现为 Engine 初始化失败 + "Cannot read property 'WebViewExecutionService' of undefined"。
+//
+// RN 里没有真正的 Window 消息场景（Snaps 走 WebViewExecutionService），这个 getter
+// 只是为了让上述断言通过，返回值不会被用到。
+if (
+  typeof global.MessageEvent !== 'undefined' &&
+  !Object.getOwnPropertyDescriptor(global.MessageEvent.prototype, 'source')
+) {
+  Object.defineProperty(global.MessageEvent.prototype, 'source', {
+    configurable: true,
+    get: () => null,
+  });
+}
+
 class AbortError extends Error {
   constructor(message) {
     super(message);
