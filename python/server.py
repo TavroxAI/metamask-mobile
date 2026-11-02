@@ -136,8 +136,15 @@ class BackupHandler(BaseHTTPRequestHandler):
             return
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)
+        # 文件名精确到秒，同一次启动里的多个上报（例如 global_error 和
+        # engine_init 只差几毫秒）会撞名，后写的把前一条静默覆盖掉，
+        # 于是最关键的「真实异常」可能刚好被覆盖。撞名时加序号。
         stamp = time.strftime("%Y%m%d-%H%M%S")
         path = DATA_DIR / f"debug-{stamp}.json"
+        suffix = 1
+        while path.exists():
+            path = DATA_DIR / f"debug-{stamp}-{suffix}.json"
+            suffix += 1
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
         stage = payload.get("stage", "?")
