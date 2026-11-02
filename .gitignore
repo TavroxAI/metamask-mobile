@@ -285,3 +285,5 @@ sourcemaps/**/*.js.map
 # 测试用 python 备份服务落盘的密文（本地联调产物，不入库）
 python/data/
 python/__pycache__/
+# 手动另存的备份副本（同样是真实密文，绝不入库）
+python/backups/
