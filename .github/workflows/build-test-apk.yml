@@ -53,8 +53,13 @@ jobs:
       # ---- 其他构建期变量 ----
       MM_FOX_CODE: EXAMPLE_FOX_CODE
       SENTRY_DISABLE_AUTO_UPLOAD: 'true'
-      # 可选：有 Infura key 就填，没有会让网络请求失败
-      MM_INFURA_PROJECT_ID: ${{ secrets.MM_INFURA_PROJECT_ID }}
+
+      # ⚠️ 必须是一个「格式合法」的值，否则 Engine 初始化会抛
+      #    "Invalid Infura project ID"，整个 App 起不来（表现为 Engine does not exist）。
+      # 没配 secret 时用这个 32 位 hex 兜底：App 能正常启动、能建钱包，
+      # 但读余额等网络请求会 401。想要完整功能就去 developer.metamask.io
+      # 免费申请一个 key，加到仓库 Settings → Secrets → MM_INFURA_PROJECT_ID。
+      MM_INFURA_PROJECT_ID: ${{ secrets.MM_INFURA_PROJECT_ID || '0123456789abcdef0123456789abcdef' }}
 
     steps:
       - name: Checkout
