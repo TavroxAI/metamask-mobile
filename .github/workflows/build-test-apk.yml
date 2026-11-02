@@ -41,17 +41,9 @@ jobs:
       # 注意：GRADLE_OPTS 只影响 Gradle 启动器，daemon 的堆是 org.gradle.jvmargs，
       # 那个也在下一步里调整。
 
-      # ---- 构建类型：Debug ----
-      # build.sh 支持 CONFIGURATION=Debug → gradle 跑 assembleProdDebug。
-      # 调试包不把 JS 打进 APK，而是从 Metro 实时加载，所以：
-      #   1. 构建快很多（不用 Hermes 字节码编译）
-      #   2. 运行时的 JS 报错会直接打在 Metro 终端，能看到完整调用栈
-      # 代价：手机必须能连到电脑上的 Metro（10.0.2.2:8081）。
-      CONFIGURATION: Debug
-
       # ---- 签名：mainDev 这个 signingConfig 指向已入库的 debug.keystore ----
-      # 注意：production 路径在这套环境里过不去（hermesc 退出码 5，见 build log），
-      # 所以退回 dev 路径——它已经成功构建过两次。目标是先拿到能跑的包验证链路。
+      # 构建类型保持 Release：JS 打进 APK，不依赖 Metro 连接
+      # （蓝叠的 adb 坏了，连不上 Metro 会直接红屏）。
       ANDROID_SIGNING_KEYSTORE_PASSWORD: android
       BITRISEIO_ANDROID_MAIN_KEYSTORE_ALIAS: androiddebugkey
       BITRISEIO_ANDROID_MAIN_KEYSTORE_PRIVATE_KEY_PASSWORD: android

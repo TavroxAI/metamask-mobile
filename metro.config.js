@@ -223,6 +223,33 @@ module.exports = function (baseConfig) {
                 'node:buffer': '@craftzdog/react-native-buffer',
               },
               resolveRequest: (context, moduleName, platform) => {
+                // @metamask/snaps-controllers 的 CJS 产物是个转发壳：
+                //   react-native.js → dist/react-native.cjs → __exportStar(require(...))
+                // 在这套 bundle 里运行时拿不到导出（Engine 初始化会抛
+                // "Cannot read property 'WebViewExecutionService' of undefined"），
+                // 而这个包在 Node 里直接 require 也会报
+                // "Unexpected token 'typeof'"（loadESMFromCJS，CJS/ESM 混装）。
+                //
+                // 它的 ESM 构建是干净的纯 re-export（无 Node 内建模块），
+                // Metro 能正常转换，且导出是普通赋值而不是 __exportStar + getter。
+                if (moduleName === '@metamask/snaps-controllers') {
+                  return {
+                    type: 'sourceFile',
+                    filePath: path.resolve(
+                      __dirname,
+                      'node_modules/@metamask/snaps-controllers/dist/index.mjs',
+                    ),
+                  };
+                }
+                if (moduleName === '@metamask/snaps-controllers/react-native') {
+                  return {
+                    type: 'sourceFile',
+                    filePath: path.resolve(
+                      __dirname,
+                      'node_modules/@metamask/snaps-controllers/dist/react-native.mjs',
+                    ),
+                  };
+                }
                 // Bare package only: subpaths (e.g. jest/mock) must resolve to node_modules.
                 // Jest does not remap this package — mapping breaks jest/mock's requireActual().
                 if (moduleName === 'react-native-safe-area-context') {
