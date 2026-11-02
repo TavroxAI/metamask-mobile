@@ -219,14 +219,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          printf '\n' > /tmp/release-notes.txt
           if gh release view latest >/dev/null 2>&1; then
-            echo "更新已有的 latest release"
             gh release upload latest metamask.apk --clobber
+            gh release edit latest --notes-file /tmp/release-notes.txt
           else
-            echo "创建 latest release"
             gh release create latest \
               --title "metamask.apk" \
-              --notes "每次 push 到 main 自动重建并覆盖。固定下载地址：releases/latest/download/metamask.apk" \
+              --notes-file /tmp/release-notes.txt \
               metamask.apk
           fi
           gh release view latest --json tagName,assets \
