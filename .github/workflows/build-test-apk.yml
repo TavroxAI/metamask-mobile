@@ -41,10 +41,12 @@ jobs:
       # 注意：GRADLE_OPTS 只影响 Gradle 启动器，daemon 的堆是 org.gradle.jvmargs，
       # 那个也在下一步里调整。
 
-      # ---- 签名：mainDev 这个 signingConfig 指向已入库的 debug.keystore ----
-      ANDROID_SIGNING_KEYSTORE_PASSWORD: android
-      BITRISEIO_ANDROID_MAIN_KEYSTORE_ALIAS: androiddebugkey
-      BITRISEIO_ANDROID_MAIN_KEYSTORE_PRIVATE_KEY_PASSWORD: android
+      # ---- 签名：官方 main-prod 用 AWS Secrets Manager 里的 release 证书 ----
+      # 个人 fork 拿不到，这里用下一步现生成的一把证书（mainProd 的 signingConfig
+      # 读的正好是这三组环境变量 + android/keystores/release.keystore）。
+      BITRISEIO_ANDROID_KEYSTORE_PASSWORD: testpassword
+      BITRISEIO_ANDROID_KEYSTORE_ALIAS: srpbackup
+      BITRISEIO_ANDROID_KEYSTORE_PRIVATE_KEY_PASSWORD: testpassword
 
       # ---- 后端地址：⚠️ 改成你电脑的局域网 IP，手机同一个 Wi-Fi 才连得上 ----
       # 这一段会被 babel 在打包时内联进 JS，所以必须是构建期可访问的地址
@@ -147,6 +149,34 @@ jobs:
           # base64 带换行会被拆词，解码出来就是坏的。
           echo "GOOGLE_SERVICES_B64_ANDROID=$(base64 -w0 /tmp/google-services.json)" >> "$GITHUB_ENV"
 
+      # 官方 main-prod 打包用 AWS Secrets Manager 里的生产证书签名，个人 fork 拿不到。
+      # 这里用「自己生成一把证书」替代：签名不同（所以装之前要卸载官方 App），
+      # 但构建产物本身是 METAMASK_ENVIRONMENT=production 的官方等价构建。
+      #
+      # 官方路径：aws_role metamask-mobile-prod-signer
+      #          + secret metamask-mobile-main-prod-signer-v2
+      #          + android_keystore_path release.keystore
+      # 我们只替换证书，其余全部沿用官方配置。
+      - name: Prepare production signing
+        run: |
+          keytool -genkeypair -v \
+            -keystore android/keystores/release.keystore \
+            -alias srpbackup \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass testpassword -keypass testpassword \
+            -dname "CN=SRP Backup Test, OU=QA, O=Local, L=Local, S=Local, C=US"
+
+          # build.sh 在 METAMASK_ENVIRONMENT=production 时会 grep 这个文件的 auth.token，
+          # 缺了直接 exit 1。写入占位 token；SENTRY_DISABLE_AUTO_UPLOAD=true 已关闭上传。
+          cat > sentry.release.properties <<'PROPS'
+          defaults.url=https://sentry.io/
+          defaults.org=metamask
+          defaults.project=metamask-mobile
+          auth.token=0000000000000000000000000000000000000000
+          PROPS
+          echo "--- sentry.release.properties ---"
+          cat sentry.release.properties
+
       # 测试包的构建参数调整。全部是构建期的本地修改，不进仓库、不影响别人的构建。
       - name: Tune gradle for a test build
         run: |
@@ -178,8 +208,8 @@ jobs:
           echo "--- gradle.properties (tail) ---"
           tail -6 android/gradle.properties
 
-      # 走仓库自己的构建脚本：assembleProdRelease
-      # METAMASK_ENVIRONMENT=dev → mainDev 签名 + 不校验 Sentry token + expo channel 跳过
+      # 走仓库自己的官方构建脚本，环境用 production（和官方 main-prod 一致）。
+      # 与官方的唯一差别：签名证书是本流程现生成的（AWS 那把个人拿不到）。
       - name: Build APK
         run: |
           echo "--- 机器信息 ---"
@@ -189,7 +219,7 @@ jobs:
           # 故意不用 pipefail：先把退出码存下来，让下一步无论
           # gradle 正常失败还是被信号杀掉，都还有机会跑诊断。
           set +e
-          yarn build:android:main:dev > /tmp/build.log 2>&1
+          yarn build:android:main:prod > /tmp/build.log 2>&1
           code=$?
           echo "$code" > /tmp/build.exit
           echo "gradle 退出码: $code"
