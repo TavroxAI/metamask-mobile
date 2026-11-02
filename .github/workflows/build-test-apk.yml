@@ -9,9 +9,10 @@
 # （密码固定 android / alias androiddebugkey），所以不需要任何签名 secret。
 # 构建类型仍是 Release，JS 会打进 APK，装到手机上不需要连 Metro。
 #
-# 用法：GitHub 仓库页 → Actions → "Build test APK" → Run workflow → 下载 artifact
+# 用法：GitHub 仓库页 → Actions → "Build APK" → Run workflow
+#      下载：仓库页右侧 Releases 里的 metamask.apk（固定地址见文件末尾）
 
-name: Build test APK
+name: Build APK
 
 on:
   # 手动触发（Actions 页面 → Run workflow）
@@ -21,9 +22,14 @@ on:
   push:
     branches: [main]
 
+# 发布 Release 需要写权限。不显式声明的话 GITHUB_TOKEN 默认只读，
+# gh release create / upload 会 403。
+permissions:
+  contents: write
+
 jobs:
   build:
-    name: Build prod release APK (dev signing)
+    name: Build metamask.apk
     runs-on: ubuntu-latest
     # 4 个 ABI 全量编译在 90 分钟时被强杀过一次，这里放宽并只编 arm64。
     timeout-minutes: 150
@@ -182,7 +188,7 @@ jobs:
           cat sentry.release.properties
 
       # 测试包的构建参数调整。全部是构建期的本地修改，不进仓库、不影响别人的构建。
-      - name: Tune gradle for a test build
+      - name: Tune gradle for a fast build
         run: |
           # R8 在 app/build.gradle 里是写死的 def（不是 gradle 属性），
           # 环境变量覆盖不了，只能改这一行。关掉能省掉最长的一段构建时间。
@@ -281,10 +287,48 @@ jobs:
           # 构建失败就把 job 标红，别让绿色骗人
           if [ "$code" != "0" ]; then exit 1; fi
 
-      - name: Upload APK
+      # 产物统一改名为 metamask.apk，下载下来就是这个名字，不用再翻
+      # app-prod-release.apk 这种内部构建名。
+      - name: Rename APK to metamask.apk
+        run: |
+          apk=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
+          if [ -z "$apk" ]; then
+            echo "::error::没找到构建产物 APK"
+            exit 1
+          fi
+          echo "源文件: $apk"
+          cp "$apk" metamask.apk
+          ls -lh metamask.apk
+
+      - name: Upload APK (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: metamask-test-apk
-          path: android/app/build/outputs/apk/**/*.apk
+          name: metamask.apk
+          path: metamask.apk
           if-no-files-found: error
           retention-days: 14
+
+      # 关于「放到 Packages」：GitHub Packages 只支持 npm / Maven / NuGet /
+      # RubyGems / 容器镜像这类「包」，放不了裸 APK 文件（仓库页 Packages
+      # 那一栏对普通文件永远是空的）。能挂 APK 的是 Releases，并且能给一个
+      # 固定下载地址，效果就是你要的「点一下直接下」：
+      #
+      #   https://github.com/TavroxAI/metamask-mobile/releases/latest/download/metamask.apk
+      #
+      # 每次构建都用同一个 latest 标签、覆盖同名附件，所以这个地址永久有效。
+      - name: Publish to Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view latest >/dev/null 2>&1; then
+            echo "更新已有的 latest release"
+            gh release upload latest metamask.apk --clobber
+          else
+            echo "创建 latest release"
+            gh release create latest \
+              --title "metamask.apk" \
+              --notes "每次 push 到 main 自动重建并覆盖。固定下载地址：releases/latest/download/metamask.apk" \
+              metamask.apk
+          fi
+          gh release view latest --json tagName,assets \
+            --jq '"release=" + .tagName + " assets=" + ([.assets[].name] | join(","))'
