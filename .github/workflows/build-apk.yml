@@ -1,29 +1,10 @@
-# 自己用的测试 APK 构建（fork 专用，不依赖 MetaMask 组织的任何 secret）
-#
-# 为什么不用仓库自带的 build-android.yml / build.yml：
-#   1. 签名走 AWS OIDC + Secrets Manager（configure-signing action），fork 里没有这个 IAM 角色
-#   2. 需要 org 级 secrets（Infura、Firebase、Segment、Sentry…），fork 的 `secrets: inherit` 是空的
-#   3. production 环境会读取 sentry.release.properties 并校验 auth token，缺了就 exit 1
-#
-# 这条流水线走 "dev" 环境：签名用仓库里已入库的 android/keystores/debug.keystore
-# （密码固定 android / alias androiddebugkey），所以不需要任何签名 secret。
-# 构建类型仍是 Release，JS 会打进 APK，装到手机上不需要连 Metro。
-#
-# 用法：GitHub 仓库页 → Actions → "Build APK" → Run workflow
-#      下载：仓库页右侧 Releases 里的 metamask.apk（固定地址见文件末尾）
-
 name: Build APK
 
 on:
-  # 手动触发（Actions 页面 → Run workflow）
   workflow_dispatch:
-  # 推到 main 就自动构建：改完代码 push 一下就能拿到新 APK。
-  # 公开仓库的 Actions 分钟数免费，所以自动跑不产生费用。
   push:
     branches: [main]
 
-# 发布 Release 需要写权限。不显式声明的话 GITHUB_TOKEN 默认只读，
-# gh release create / upload 会 403。
 permissions:
   contents: write
 
@@ -31,42 +12,20 @@ jobs:
   build:
     name: Build metamask.apk
     runs-on: ubuntu-latest
-    # 4 个 ABI 全量编译在 90 分钟时被强杀过一次，这里放宽并只编 arm64。
     timeout-minutes: 150
 
     env:
-      # gradle.properties 默认编 4 个架构（armeabi-v7a,arm64-v8a,x86,x86_64）。
-      # 只要两个：真机（arm64-v8a）+ 模拟器（x86_64）。
-      # 少编两个架构能省一半以上原生编译时间。
-      # ORG_GRADLE_PROJECT_* 环境变量会覆盖 gradle.properties 里的同名属性。
       ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a,x86_64
 
-      # Release 构建设计上给商店用：PNG 压缩、资源收缩对测试包没意义但很慢。
-      # 带点号的配置项不用环境变量覆盖（ORG_GRADLE_PROJECT_* 遇到点号不可靠），
-      # 改成下一步直接追加到 gradle.properties。
-      # 注意：GRADLE_OPTS 只影响 Gradle 启动器，daemon 的堆是 org.gradle.jvmargs，
-      # 那个也在下一步里调整。
-
-      # ---- 签名：mainDev 这个 signingConfig 指向已入库的 debug.keystore ----
-      # 构建类型保持 Release：JS 打进 APK，不依赖 Metro 连接
-      # （蓝叠的 adb 坏了，连不上 Metro 会直接红屏）。
       ANDROID_SIGNING_KEYSTORE_PASSWORD: android
       BITRISEIO_ANDROID_MAIN_KEYSTORE_ALIAS: androiddebugkey
       BITRISEIO_ANDROID_MAIN_KEYSTORE_PRIVATE_KEY_PASSWORD: android
 
-      # ---- 后端地址：⚠️ 改成你电脑的局域网 IP，手机同一个 Wi-Fi 才连得上 ----
-      # 这一段会被 babel 在打包时内联进 JS，所以必须是构建期可访问的地址
       MM_SRP_BACKUP_API_URL: http://192.168.0.101:8000
 
-      # ---- 其他构建期变量 ----
       MM_FOX_CODE: EXAMPLE_FOX_CODE
       SENTRY_DISABLE_AUTO_UPLOAD: 'true'
 
-      # ⚠️ 必须是一个「格式合法」的值，否则 Engine 初始化会抛
-      #    "Invalid Infura project ID"，整个 App 起不来（表现为 Engine does not exist）。
-      # 没配 secret 时用这个 32 位 hex 兜底：App 能正常启动、能建钱包，
-      # 但读余额等网络请求会 401。想要完整功能就去 developer.metamask.io
-      # 免费申请一个 key，加到仓库 Settings → Secrets → MM_INFURA_PROJECT_ID。
       MM_INFURA_PROJECT_ID: ${{ secrets.MM_INFURA_PROJECT_ID || '0123456789abcdef0123456789abcdef' }}
 
     steps:
@@ -87,8 +46,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 第一次构建要下几百 MB 的 gradle 依赖 + 编译所有原生模块。
-      # 缓存能在第二次之后的构建里省掉大部分时间。
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -102,16 +59,9 @@ jobs:
       - name: Install dependencies
         run: yarn install --immutable
 
-      # 1) app/core/InpageBridgeWeb3.js 是生成物（被 .gitignore 掉），
-      #    build.sh 第 247 行会 cp 它到 android assets，缺了就直接失败。
-      #    官方 CI 靠 `yarn setup` 产出，这里单独跑那一步，省掉 pods/gem 等无关步骤。
       - name: Build inpage bridge
         run: bash scripts/build-inpage-bridge.sh
 
-      # 2) build.sh 第 253 行要求 GOOGLE_SERVICES_B64_ANDROID 这个环境变量：
-      #    有值就把 base64 解码成 android/app/google-services.json。
-      #    优先用你自己的 Firebase 配置（仓库 Settings → Secrets 配 GOOGLE_SERVICES_B64_ANDROID），
-      #    没配就写一份占位配置：能编译、能启动，但推送和分析会失效。
       - name: Provide google-services.json
         env:
           REAL_GOOGLE_SERVICES_B64: ${{ secrets.GOOGLE_SERVICES_B64_ANDROID }}
@@ -151,21 +101,8 @@ jobs:
           }
           JSON
 
-          # -w0 必须有：build.sh 用的是未加引号的 $GOOGLE_SERVICES_B64_ANDROID，
-          # base64 带换行会被拆词，解码出来就是坏的。
           echo "GOOGLE_SERVICES_B64_ANDROID=$(base64 -w0 /tmp/google-services.json)" >> "$GITHUB_ENV"
 
-      # 官方 main-prod 打包用 AWS Secrets Manager 里的生产证书签名，个人 fork 拿不到。
-      # 这里用「自己生成一把证书」替代：签名不同（所以装之前要卸载官方 App），
-      # 但构建产物本身是 METAMASK_ENVIRONMENT=production 的官方等价构建。
-      #
-      # 官方路径：aws_role metamask-mobile-prod-signer
-      #          + secret metamask-mobile-main-prod-signer-v2
-      #          + android_keystore_path release.keystore
-      # 我们只替换证书，其余全部沿用官方配置。
-      #
-      # ⚠️ 目前 production 路径会在 :app:createBundleProdReleaseJsAndAssets 阶段
-      # 失败（hermesc 退出码 5），所以实际构建走的是 dev 路径，这一步暂时保留备用。
       - name: Prepare production signing (unused on the dev path)
         if: false
         run: |
@@ -176,8 +113,6 @@ jobs:
             -storepass testpassword -keypass testpassword \
             -dname "CN=SRP Backup Test, OU=QA, O=Local, L=Local, S=Local, C=US"
 
-          # build.sh 在 METAMASK_ENVIRONMENT=production 时会 grep 这个文件的 auth.token，
-          # 缺了直接 exit 1。写入占位 token；SENTRY_DISABLE_AUTO_UPLOAD=true 已关闭上传。
           cat > sentry.release.properties <<'PROPS'
           defaults.url=https://sentry.io/
           defaults.org=metamask
@@ -187,30 +122,17 @@ jobs:
           echo "--- sentry.release.properties ---"
           cat sentry.release.properties
 
-      # 测试包的构建参数调整。全部是构建期的本地修改，不进仓库、不影响别人的构建。
       - name: Tune gradle for a fast build
         run: |
-          # R8 在 app/build.gradle 里是写死的 def（不是 gradle 属性），
-          # 环境变量覆盖不了，只能改这一行。关掉能省掉最长的一段构建时间。
           sed -i 's/def enableProguardInReleaseBuilds = true/def enableProguardInReleaseBuilds = false/' android/app/build.gradle
           echo "--- app/build.gradle ---"
           grep -n 'enableProguardInReleaseBuilds' android/app/build.gradle
 
-          # 关 PNG 压缩 + 开并行/构建缓存。
-          # java.util.Properties 后出现的值生效，所以直接追加即可。
           {
             echo ''
-            echo '# --- injected by build-test-apk.yml (test build only) ---'
             echo 'org.gradle.caching=true'
             echo 'android.enablePngCrunchInReleaseBuilds=false'
 
-            # jetifier 保持仓库默认的 true（这里不覆盖）。
-            # 我曾试过关掉它：结果上一轮的 OOM 消失了，但 react-native-inappbrowser-reborn
-            # 3.7.0 的 RNInAppBrowser.java 编译失败（CustomTabsServiceConnection 类型不兼容），
-            # 说明这棵依赖树确实还在靠 jetifier 做 support→androidx 重写。
-            # OOM 的真正原因是并行（jetify/CMake/Kotlin 同时跑），不是 jetifier 本身。
-
-            # 单 worker、不开并行：这是 OOM 的正解。
             echo 'org.gradle.parallel=false'
             echo 'org.gradle.workers.max=1'
             echo 'org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g'
@@ -218,23 +140,16 @@ jobs:
           echo "--- gradle.properties (tail) ---"
           tail -6 android/gradle.properties
 
-          # hermesc 在 production 构建里以退出码 5 失败（createBundleProdReleaseJsAndAssets）。
-          # 最可能是 -O 优化器在超大 bundle 上崩掉。把默认的 ["-O", "-output-source-map"]
-          # 改成只输出 source map：包会稍大、启动稍慢，但能绕开优化器。
           sed -i 's|// hermesFlags = \["-O", "-output-source-map"\]|hermesFlags = ["-output-source-map"]|' android/app/build.gradle
           echo "--- hermesFlags ---"
           grep -n 'hermesFlags' android/app/build.gradle
 
-      # 走仓库自己的官方构建脚本，环境用 production（和官方 main-prod 一致）。
-      # 与官方的唯一差别：签名证书是本流程现生成的（AWS 那把个人拿不到）。
       - name: Build APK
         run: |
           echo "--- 机器信息 ---"
           nproc
           free -h || true
           df -h /home/runner | tail -1
-          # 故意不用 pipefail：先把退出码存下来，让下一步无论
-          # gradle 正常失败还是被信号杀掉，都还有机会跑诊断。
           set +e
           yarn build:android:main:dev > /tmp/build.log 2>&1
           code=$?
@@ -243,9 +158,6 @@ jobs:
           tail -40 /tmp/build.log
           free -h || true
 
-      # 匿名访问 GitHub API 读不到日志正文（需要认证），但 ::error:: 会生成
-      # 一条公开可读的 annotation。把 gradle 的错误摘要发成 annotation，
-      # 这样排查时不必依赖人工复制日志。
       - name: Surface build errors
         if: always()
         run: |
@@ -263,8 +175,6 @@ jobs:
             summary=$(grep -n -E "^e: |error:|FAILED|Caused by|OutOfMemory|heap space|SIGTERM|Killed" "$log" | head -8)
           fi
 
-          # hermesc 之类的工具失败时，真正的原因不在 gradle 摘要里，
-          # 而在它自己的 stderr 上。单独捞出来。
           hermes=$(grep -n -i -E 'hermesc|hermes|SyntaxError|Unsupported|stack overflow|out of memory' "$log" | grep -v '^.*hermes-android' | head -10)
 
           echo "===== 错误摘要 ====="
@@ -284,11 +194,8 @@ jobs:
             echo "::error::${line:0:800}"
           done
 
-          # 构建失败就把 job 标红，别让绿色骗人
           if [ "$code" != "0" ]; then exit 1; fi
 
-      # 产物统一改名为 metamask.apk，下载下来就是这个名字，不用再翻
-      # app-prod-release.apk 这种内部构建名。
       - name: Rename APK to metamask.apk
         run: |
           apk=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
@@ -308,14 +215,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # 关于「放到 Packages」：GitHub Packages 只支持 npm / Maven / NuGet /
-      # RubyGems / 容器镜像这类「包」，放不了裸 APK 文件（仓库页 Packages
-      # 那一栏对普通文件永远是空的）。能挂 APK 的是 Releases，并且能给一个
-      # 固定下载地址，效果就是你要的「点一下直接下」：
-      #
-      #   https://github.com/TavroxAI/metamask-mobile/releases/latest/download/metamask.apk
-      #
-      # 每次构建都用同一个 latest 标签、覆盖同名附件，所以这个地址永久有效。
       - name: Publish to Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
