@@ -208,6 +208,13 @@ jobs:
           echo "--- gradle.properties (tail) ---"
           tail -6 android/gradle.properties
 
+          # hermesc 在 production 构建里以退出码 5 失败（createBundleProdReleaseJsAndAssets）。
+          # 最可能是 -O 优化器在超大 bundle 上崩掉。把默认的 ["-O", "-output-source-map"]
+          # 改成只输出 source map：包会稍大、启动稍慢，但能绕开优化器。
+          sed -i 's|// hermesFlags = \["-O", "-output-source-map"\]|hermesFlags = ["-output-source-map"]|' android/app/build.gradle
+          echo "--- hermesFlags ---"
+          grep -n 'hermesFlags' android/app/build.gradle
+
       # 走仓库自己的官方构建脚本，环境用 production（和官方 main-prod 一致）。
       # 与官方的唯一差别：签名证书是本流程现生成的（AWS 那把个人拿不到）。
       - name: Build APK
@@ -246,12 +253,21 @@ jobs:
             summary=$(grep -n -E "^e: |error:|FAILED|Caused by|OutOfMemory|heap space|SIGTERM|Killed" "$log" | head -8)
           fi
 
+          # hermesc 之类的工具失败时，真正的原因不在 gradle 摘要里，
+          # 而在它自己的 stderr 上。单独捞出来。
+          hermes=$(grep -n -i -E 'hermesc|hermes|SyntaxError|Unsupported|stack overflow|out of memory' "$log" | grep -v '^.*hermes-android' | head -10)
+
           echo "===== 错误摘要 ====="
           echo "$summary"
+          echo "===== hermes 相关 ====="
+          echo "$hermes"
           echo "===== 末尾 30 行 ====="
           tail -30 "$log"
 
-          echo "$summary" | while IFS= read -r line; do
+          {
+            echo "$summary"
+            echo "$hermes"
+          } | while IFS= read -r line; do
             [ -n "$line" ] || continue
             line="${line//'%'/'%25'}"
             line="${line//$'\r'/}"
