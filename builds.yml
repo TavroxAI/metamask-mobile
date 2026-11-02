@@ -212,11 +212,8 @@ _signing_flask_uat: &signing_flask_uat
 
 # Main code fencing features
 _code_fencing_main: &code_fencing_main
-  # 测试 fork：去掉了 snaps 和 keyring-snaps。
-  # 原因：Engine 初始化时 executionServiceInit 会 new WebViewExecutionService，
-  # 在这套自签测试构建里抛 "Cannot read property 'WebViewExecutionService' of
-  # undefined"，整个 Engine 起不来（界面卡在启动页）。
-  # 测试目标是「创建钱包 → 自动加密备份」，不需要 Snaps。上游 main-prod 保留。
+  - snaps
+  - keyring-snaps
   - multi-srp
   - solana
   - bitcoin
