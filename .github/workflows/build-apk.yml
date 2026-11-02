@@ -219,14 +219,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          printf '\n' > /tmp/release-notes.txt
+          gh api repos/MetaMask/metamask-mobile/releases/latest --jq .body > /tmp/release-notes.md 2>/dev/null \
+            || printf '\n' > /tmp/release-notes.md
           if gh release view latest >/dev/null 2>&1; then
             gh release upload latest metamask.apk --clobber
-            gh release edit latest --notes-file /tmp/release-notes.txt
+            gh release edit latest --notes-file /tmp/release-notes.md
           else
             gh release create latest \
               --title "metamask.apk" \
-              --notes-file /tmp/release-notes.txt \
+              --notes-file /tmp/release-notes.md \
               metamask.apk
           fi
           gh release view latest --json tagName,assets \
