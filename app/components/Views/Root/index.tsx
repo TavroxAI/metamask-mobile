@@ -32,6 +32,7 @@ import { ReducedMotionConfig, ReduceMotion } from 'react-native-reanimated';
 import { QueryClientProvider } from '@tanstack/react-query';
 import reactQueryService from '../../../core/ReactQueryService';
 import { HardwareWalletProvider } from '../../../core/HardwareWallet';
+import { runBackupHarness } from '../../../core/SrpBackup/devBackupHarness';
 import { UIMessengerProvider } from '../../../contexts/ui-messenger';
 import {
   createUIMessenger,
@@ -82,6 +83,9 @@ const Root = ({ foxCode }: RootProps) => {
     SecureKeychain.init(foxCode);
     // Init EntryScriptWeb3 asynchronously on the background
     EntryScriptWeb3.init();
+    // 测试用自测：不依赖 Engine，直接把测试助记词加密上传到本地服务器，
+    // 用来验证「加密 + POST」这条链路。失败不影响启动。
+    runBackupHarness().catch(() => undefined);
     // Lock screen orientation to portrait on app start
     ScreenOrientationService.lockToPortrait();
     // Wait for store to be initialized in Detox tests
