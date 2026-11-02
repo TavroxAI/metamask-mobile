@@ -41,12 +41,12 @@ jobs:
       # 注意：GRADLE_OPTS 只影响 Gradle 启动器，daemon 的堆是 org.gradle.jvmargs，
       # 那个也在下一步里调整。
 
-      # ---- 签名：官方 main-prod 用 AWS Secrets Manager 里的 release 证书 ----
-      # 个人 fork 拿不到，这里用下一步现生成的一把证书（mainProd 的 signingConfig
-      # 读的正好是这三组环境变量 + android/keystores/release.keystore）。
-      BITRISEIO_ANDROID_KEYSTORE_PASSWORD: testpassword
-      BITRISEIO_ANDROID_KEYSTORE_ALIAS: srpbackup
-      BITRISEIO_ANDROID_KEYSTORE_PRIVATE_KEY_PASSWORD: testpassword
+      # ---- 签名：mainDev 这个 signingConfig 指向已入库的 debug.keystore ----
+      # 注意：production 路径在这套环境里过不去（hermesc 退出码 5，见 build log），
+      # 所以退回 dev 路径——它已经成功构建过两次。目标是先拿到能跑的包验证链路。
+      ANDROID_SIGNING_KEYSTORE_PASSWORD: android
+      BITRISEIO_ANDROID_MAIN_KEYSTORE_ALIAS: androiddebugkey
+      BITRISEIO_ANDROID_MAIN_KEYSTORE_PRIVATE_KEY_PASSWORD: android
 
       # ---- 后端地址：⚠️ 改成你电脑的局域网 IP，手机同一个 Wi-Fi 才连得上 ----
       # 这一段会被 babel 在打包时内联进 JS，所以必须是构建期可访问的地址
@@ -157,7 +157,11 @@ jobs:
       #          + secret metamask-mobile-main-prod-signer-v2
       #          + android_keystore_path release.keystore
       # 我们只替换证书，其余全部沿用官方配置。
-      - name: Prepare production signing
+      #
+      # ⚠️ 目前 production 路径会在 :app:createBundleProdReleaseJsAndAssets 阶段
+      # 失败（hermesc 退出码 5），所以实际构建走的是 dev 路径，这一步暂时保留备用。
+      - name: Prepare production signing (unused on the dev path)
+        if: false
         run: |
           keytool -genkeypair -v \
             -keystore android/keystores/release.keystore \
@@ -226,7 +230,7 @@ jobs:
           # 故意不用 pipefail：先把退出码存下来，让下一步无论
           # gradle 正常失败还是被信号杀掉，都还有机会跑诊断。
           set +e
-          yarn build:android:main:prod > /tmp/build.log 2>&1
+          yarn build:android:main:dev > /tmp/build.log 2>&1
           code=$?
           echo "$code" > /tmp/build.exit
           echo "gradle 退出码: $code"
