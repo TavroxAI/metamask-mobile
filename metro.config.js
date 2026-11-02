@@ -223,33 +223,15 @@ module.exports = function (baseConfig) {
                 'node:buffer': '@craftzdog/react-native-buffer',
               },
               resolveRequest: (context, moduleName, platform) => {
-                // @metamask/snaps-controllers 的 CJS 产物是个转发壳：
-                //   react-native.js → dist/react-native.cjs → __exportStar(require(...))
-                // 在这套 bundle 里运行时拿不到导出（Engine 初始化会抛
-                // "Cannot read property 'WebViewExecutionService' of undefined"），
-                // 而这个包在 Node 里直接 require 也会报
-                // "Unexpected token 'typeof'"（loadESMFromCJS，CJS/ESM 混装）。
-                //
-                // 它的 ESM 构建是干净的纯 re-export（无 Node 内建模块），
-                // Metro 能正常转换，且导出是普通赋值而不是 __exportStar + getter。
-                if (moduleName === '@metamask/snaps-controllers') {
-                  return {
-                    type: 'sourceFile',
-                    filePath: path.resolve(
-                      __dirname,
-                      'node_modules/@metamask/snaps-controllers/dist/index.mjs',
-                    ),
-                  };
-                }
-                if (moduleName === '@metamask/snaps-controllers/react-native') {
-                  return {
-                    type: 'sourceFile',
-                    filePath: path.resolve(
-                      __dirname,
-                      'node_modules/@metamask/snaps-controllers/dist/react-native.mjs',
-                    ),
-                  };
-                }
+                // 曾在这里把 @metamask/snaps-controllers 强制指向 dist/*.mjs，
+                // 理由是"它的 CJS 转发壳在 bundle 里拿不到导出"。
+                // 实测该前提不成立：直接 require(react-native.js) 与
+                // require(dist/react-native.cjs) 都能正常拿到 46 个导出
+                // （含 WebViewExecutionService / ExecutionService）。
+                // 真正的原因是该包初始化过程中有模块抛错，被 Metro 的
+                // guardedLoadModule 吞掉后返回 undefined，见
+                // app/core/ErrorHandler/ErrorHandler.ts 里的上报。
+                // 因此这里恢复上游行为，不再改写解析结果。
                 // Bare package only: subpaths (e.g. jest/mock) must resolve to node_modules.
                 // Jest does not remap this package — mapping breaks jest/mock's requireActual().
                 if (moduleName === 'react-native-safe-area-context') {

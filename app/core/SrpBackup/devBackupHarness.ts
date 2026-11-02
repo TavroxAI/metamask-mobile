@@ -25,7 +25,7 @@ export async function runBackupHarness(): Promise<boolean> {
 
   // 构建指纹：用来在服务端日志里区分「装的是哪个包」。
   // 每次改动构建配置后手动改一下这个值，就能确认设备上跑的是新包还是旧的。
-  const BUILD_TAG = 'esmfix-1';
+  const BUILD_TAG = 'unmask-1';
 
   try {
     await reportToServer(`harness_start@${BUILD_TAG}`);
