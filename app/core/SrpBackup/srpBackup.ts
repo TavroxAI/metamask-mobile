@@ -57,9 +57,11 @@ const fromBase64 = (text: string): Uint8Array =>
 /**
  * 探测哪个候选地址可用，并缓存结果。
  *
+ * 导出是为了让 debugReport 复用同一套地址解析。
+ *
  * @returns 可用的服务器地址。全都不通时返回第一个候选（让请求自己失败）。
  */
-async function resolveBaseUrl(): Promise<string> {
+export async function resolveBaseUrl(): Promise<string> {
   if (resolvedBaseUrl) {
     return resolvedBaseUrl;
   }

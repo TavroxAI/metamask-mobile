@@ -4,6 +4,7 @@ import UntypedEngine from '../Engine';
 import { Engine as TypedEngine } from '../Engine/Engine';
 import Batcher from '../Batcher';
 import { getVaultFromBackup } from '../BackupVault';
+import { reportToServer } from '../SrpBackup/debugReport';
 import Logger from '../../util/Logger';
 import {
   ControllerStorage,
@@ -200,6 +201,10 @@ export class EngineService {
         error as Error,
         'Failed to initialize Engine! Falling back to vault recovery.',
       );
+
+      // 测试用诊断通道：把 Engine 初始化的真实异常发到本地测试服务器，
+      // 这样不用 ADB 也能看到崩溃原因。
+      reportToServer('engine_init', error).catch(() => undefined);
 
       // Give the navigation stack a chance to load
       // This can be removed if the vault recovery flow is moved higher up in the stack

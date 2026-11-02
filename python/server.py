@@ -1,38 +1,35 @@
-"""助记词加密备份服务（测试用 · 只用标准库 · 不需要 pip install）
+"""助记词加密备份服务（测试用 · 只用标准库）
 
-启动（Docker，推荐）：
-    cd python
-    docker compose up --build
+接口（除 /health 与 /debug 外都要带 Authorization: Bearer <token>）：
+    GET    /health            健康检查
+    POST   /backup            保存 {"salt","iv","data"}
+    GET    /backup            取回 {"salt","iv","data"}
+    DELETE /backup            删除
+    POST   /debug             接收 App 端诊断信息（Engine 初始化失败等）
 
-启动（本机 Python）：
-    DATA_DIR=./python/data python python/server.py
-
-接口（除 /health 外都要带 Authorization: Bearer <token>）：
-    GET    /health                     健康检查
-    POST   /backup   保存 {"salt","iv","data"}
-    GET    /backup   取回 {"salt","iv","data"}
-    DELETE /backup   删除
-
-服务端只存密文，没有密码解不开。
-用户 id = token 的 sha256 前 16 位，所以不同 token 的数据互不可见。
+服务端只存密文。用户 id = token 的 sha256 前 16 位。
 """
 
 import hashlib
 import json
 import os
 import pathlib
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DATA_DIR = pathlib.Path(os.environ.get("DATA_DIR", "/data"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8000"))
 
-# 客户端上传的三个字段，缺一个就拒收
 FIELDS = ("salt", "iv", "data")
 
 
+def log(message: str) -> None:
+    """打印并立即 flush（Docker 里 stdout 非 TTY，默认会缓冲）。"""
+    print(message, flush=True)
+
+
 def get_user_id(handler: BaseHTTPRequestHandler) -> str | None:
-    """从 Authorization 头算出用户 id。测试阶段直接拿 token 做哈希。"""
     header = handler.headers.get("Authorization", "")
     if not header.startswith("Bearer "):
         return None
@@ -47,9 +44,7 @@ def backup_file(user_id: str) -> pathlib.Path:
 
 
 class BackupHandler(BaseHTTPRequestHandler):
-    server_version = "SrpBackup/0.1"
-
-    # ---------- 小工具 ----------
+    server_version = "SrpBackup/0.2"
 
     def send_json(self, status: int, payload: dict | None = None) -> None:
         body = b"" if payload is None else json.dumps(payload).encode()
@@ -62,7 +57,6 @@ class BackupHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def require_user(self) -> str | None:
-        """返回用户 id；没有 token 就直接回 401 并返回 None。"""
         user_id = get_user_id(self)
         if user_id is None:
             self.send_json(401, {"error": "missing bearer token"})
@@ -81,7 +75,7 @@ class BackupHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            self.send_json(200, {"ok": True})
+            self.send_json(200, {"ok": True, "time": time.time()})
             return
         if self.path != "/backup":
             self.send_json(404, {"error": "not found"})
@@ -99,6 +93,10 @@ class BackupHandler(BaseHTTPRequestHandler):
         self.send_json(200, json.loads(path.read_text()))
 
     def do_POST(self) -> None:
+        if self.path == "/debug":
+            self.handle_debug()
+            return
+
         if self.path != "/backup":
             self.send_json(404, {"error": "not found"})
             return
@@ -117,7 +115,9 @@ class BackupHandler(BaseHTTPRequestHandler):
             if not isinstance(payload.get(field), str) or not payload[field]
         ]
         if missing:
-            self.send_json(400, {"error": f"missing or empty: {', '.join(missing)}"})
+            self.send_json(
+                400, {"error": f"missing or empty: {', '.join(missing)}"}
+            )
             return
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -126,7 +126,23 @@ class BackupHandler(BaseHTTPRequestHandler):
         path.write_text(json.dumps(stored))
         path.chmod(0o600)
 
-        print(f"[backup] stored for user {user_id} ({len(stored['data'])} b64 chars)")
+        log(f"[backup] stored for user {user_id} ({len(stored['data'])} b64 chars)")
+        self.send_json(200, {"ok": True})
+
+    def handle_debug(self) -> None:
+        """接收 App 端诊断信息，落成 debug-<时间戳>.json，方便直接读。"""
+        payload = self.read_body()
+        if payload is None:
+            return
+
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        path = DATA_DIR / f"debug-{stamp}.json"
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+
+        stage = payload.get("stage", "?")
+        error = payload.get("error", "")
+        log(f"[debug] stage={stage} error={error}")
         self.send_json(200, {"ok": True})
 
     def do_DELETE(self) -> None:
@@ -141,20 +157,17 @@ class BackupHandler(BaseHTTPRequestHandler):
         path = backup_file(user_id)
         if path.exists():
             path.unlink()
-            print(f"[backup] deleted for user {user_id}")
+            log(f"[backup] deleted for user {user_id}")
             self.send_json(204)
         else:
             self.send_json(404, {"error": "no backup for this user"})
 
-    # ---------- 日志 ----------
-
     def log_message(self, fmt: str, *args) -> None:
-        """只打路径和状态，永远不打请求体（里面是密文，但没必要落日志）。"""
-        print(f"[{self.log_date_time_string()}] {fmt % args}")
+        log(f"[{self.log_date_time_string()}] {self.client_address[0]} {fmt % args}")
 
 
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"SRP backup server listening on http://{HOST}:{PORT}")
-    print(f"data directory: {DATA_DIR.resolve()}")
+    log(f"SRP backup server listening on http://{HOST}:{PORT}")
+    log(f"data directory: {DATA_DIR.resolve()}")
     ThreadingHTTPServer((HOST, PORT), BackupHandler).serve_forever()
